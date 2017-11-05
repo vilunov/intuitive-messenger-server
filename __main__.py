@@ -52,6 +52,8 @@ class MessengerProtocol(Protocol):
 			if(message["type"] == "File"):
 				#Extract bytes from base64 string and save it in "files" folder
 				data = binascii.a2b_base64(message['text'])
+				if not os.path.exists("files\\"):
+					os.makedirs("files\\")
 				file = open("files\\" + message["filename"],'wb')
 				file.write(data)
 				file.close()

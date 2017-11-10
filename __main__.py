@@ -87,7 +87,7 @@ class MessengerProtocol(Protocol):
 			if(message["type"] == "Text"):
 				#Send recieved text to all clients
 				messg =  {"type":"Text","name":message["name"] ,\
-					"filename":message["filename"],"date":"","text":message["text"] }
+					"filename":message["filename"],"date":message["date"],"text":message["text"] }
 				jsn = json.dumps(messg)
 				for c in self.factory.clients:
 					c.transport.write(jsn.encode())

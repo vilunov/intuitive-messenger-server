@@ -1,6 +1,5 @@
 from twisted.internet.protocol import Protocol, Factory
 from twisted.internet import reactor
-import json
 import binascii
 import struct
 import os
@@ -16,55 +15,72 @@ class MessengerProtocol(Protocol):
 		for root, dirs, files in os.walk('files\\'):
 			for fil in files:
 				filestr+=fil + ";"
-		filestr = filestr[:len(filestr) - 1]
+		filestr = filestr[:len(filestr) - 1]	
 
-		notification = {"type":"Table info","name": "",\
-		"filename":"","date":"","text":filestr}
+		notification = chr(3).encode("utf-8") + chr(0).encode("utf-8") + chr(0).encode("utf-8") \
+			 + filestr.encode("utf-8") + "END".encode("utf-8")
 
-		self.transport.write(json.dumps(notification).encode())
+		self.transport.write(notification)
 
 	def connectionLost(self, reason):
 		self.factory.clients.remove(self)
 
 	def dataReceived(self, data):
-		datastr = data.decode("utf-8")
 		#This is called PRO100PEZDATIY PR0T0C0L
-		if datastr[len(datastr) - 3:] == "END":
+		if data[len(data) - 3:].decode("utf-8") == "END":
+			datastr = self.currentMessage + data[:len(data) - 3].decode("utf-8")
+			type = ""
+			if ord(datastr[0]) == 0:
+				type = "Text"
+			elif ord(datastr[0]) == 1:
+				type = "File"
+			elif ord(datastr[0]) == 2:
+				type = "File Request"
+			
+			namelen = ord(datastr[1])
+			fnamelen = ord(datastr[2])
+			txtlen = len(datastr[3 + namelen + fnamelen:])
 
-			message = json.loads(self.currentMessage + datastr[:len(datastr) - 3])
+			name = datastr[3:3 + namelen]
+			filename = datastr[3 + namelen:3 + namelen + fnamelen]
+			text = datastr[3 + namelen + fnamelen:3 + namelen + fnamelen + txtlen]
 
-			if message["type"] != "File":
-				print("Recieved " + message["type"] + " from " + message["name"] + " : " + message["text"])
+			if type != "File":
+				print("Recieved " + type + " from " + name + " : " + text)
 			else:
-				print("Recieved file " + message["filename"] + " from " + message["name"])
+				print("Recieved file " + filename + " from " + name)
 
-			if(message["type"] == "File Request"):
+			if(type == "File Request"):
 				#Fetch binary string from file
-				in_file = open("files\\" + message["filename"], "rb")
-				datastr = in_file.read()
+				in_file = open("files\\" + filename, "rb")
+				dat = in_file.read()
 				in_file.close()
 				
-				#Convert it to base64
-				text = binascii.b2a_base64(datastr).decode()
-				
+				txt = binascii.b2a_base64(dat)
 				#Send it to the user
-				request = {"type":"File","name":"","filename":message["filename"],"date":"","text":text}
-				self.transport.write(json.dumps(request).encode())
-			if(message["type"] == "File"):
+				request = chr(1).encode("utf-8") + chr(0).encode("utf-8") + chr(len(filename)).encode("utf-8") + \
+			 filename.encode("utf-8") + txt + "END".encode("utf-8")
+
+				self.transport.write(request)
+
+			if(type == "File"):
+				dat = binascii.a2b_base64(datastr[3 + namelen + fnamelen:3 + namelen + fnamelen + txtlen])
 				#Extract bytes from base64 string and save it in "files" folder
-				datastr = binascii.a2b_base64(message['text'])
 				if not os.path.exists("files\\"):
 					os.makedirs("files\\")
-				file = open("files\\" + message["filename"],'ab')
-				file.write(datastr)
+				file = open("files\\" + filename,'ab')
+				file.write(dat)
 				file.close()
 				
 				#Notify all users about new file
-				notification = {"type":"Notification","name": message["name"],\
-				"filename":"","date":"","text":message["date"] + \
-				 "  User " + message["name"] + " uploaded new file " + message["filename"] + "\n"}
+
+				note = "User " + name + " uploaded new file " + filename + "\n"
+
+				notification = chr(2).encode("utf-8") + chr(len(name)).encode("utf-8") + chr(0).encode("utf-8") + \
+				 name.encode("utf-8") + note.encode("utf-8")
+
 				for c in self.factory.clients:
-					c.transport.write(json.dumps(notification).encode())
+					c.transport.write(notification)
 
 				#Send info about new currently available files to all clients
 				filestr = ""
@@ -73,29 +89,29 @@ class MessengerProtocol(Protocol):
 						filestr+=fil + ";"
 				filestr = filestr[:len(filestr) - 1]
 
-				notification = {"type":"Table info","name": "",\
-				"filename":"","date":"","text":filestr}
+				notification = '#'.encode("utf-8") + chr(3).encode("utf-8") + chr(0).encode("utf-8") + chr(0).encode("utf-8") + \
+				 filestr.encode("utf-8") + "END".encode("utf-8")
 
 				for c in self.factory.clients:
-					c.transport.write(("#" + json.dumps(notification)).encode())
+					c.transport.write(notification)
 
 				print("All clients are now notified about current file table")
 
 				#Be ready for the new request
 				self.currentMessage = ""
 
-			if(message["type"] == "Text"):
+			if(type == "Text"):
 				#Send recieved text to all clients
-				messg =  {"type":"Text","name":message["name"] ,\
-					"filename":message["filename"],"date":message["date"],"text":message["text"] }
-				jsn = json.dumps(messg)
+				messg = chr(0).encode("utf-8") + chr(len(name)).encode("utf-8") + chr(0).encode("utf-8") + \
+			 name.encode("utf-8") + text.encode("utf-8") + "END".encode("utf-8")
+
 				for c in self.factory.clients:
-					c.transport.write(jsn.encode())
+					c.transport.write(messg)
 
 				self.currentMessage = ""
 		else:
 			#Accumulate request
-			self.currentMessage+=datastr
+			self.currentMessage+=data.decode("utf-8")
 
 if __name__ == "__main__":
 	factory = Factory()

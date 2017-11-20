@@ -11,6 +11,7 @@ class MessengerProtocol(Protocol):
 		for root, dirs, files in os.walk('files'):
 			for fil in files:
 				filestr += fil + ";"
+			break
 		filestr = filestr[:len(filestr) - 1]
 		return filestr
 
@@ -86,8 +87,9 @@ class MessengerProtocol(Protocol):
 
 			note = "User " + name + " uploaded new file " + filename + "\n"
 
-			encoded = note.encode("utf-8")
-			notification = bytes([2, len(name), 0]) + int.to_bytes(len(encoded), 4, byteorder='little') + name.encode("utf-8") + encoded
+			encoded1 = name.encode("utf-8")
+			encoded2 = note.encode("utf-8")
+			notification = bytes([2, len(encoded1), 0]) + int.to_bytes(len(encoded2), 4, byteorder='little') + encoded1 + encoded2
 
 			for c in self.factory.clients:
 				c.transport.write(notification)

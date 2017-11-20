@@ -6,19 +6,28 @@ import os
 
 class MessengerProtocol(Protocol):
 
+	def getFileStr(self):
+		filestr = ""
+		for root, dirs, files in os.walk('files'):
+			for fil in files:
+				filestr += fil + ";"
+		filestr = filestr[:len(filestr) - 1]
+		return filestr
+
 	def connectionMade(self):
-		self.currentMessage = ""
+		self.currentMessage = bytes()
+		self.namelen = 0
+		self.fnamelen = 0
+		self.txtlen = 0
+		self.waiting = False
+		self.msgtype = ""
+		
 		self.factory.clients.append(self)
 		#We have to send available file table to the
 		#new client right after connection was made
-		filestr = ""
-		for root, dirs, files in os.walk('files\\'):
-			for fil in files:
-				filestr+=fil + ";"
-		filestr = filestr[:len(filestr) - 1]	
 
-		notification = chr(3).encode("utf-8") + chr(0).encode("utf-8") + chr(0).encode("utf-8") \
-			 + filestr.encode("utf-8") + "END".encode("utf-8")
+		encoded = self.getFileStr().encode("utf-8")
+		notification = bytes([3, 0, 0]) + int.to_bytes(len(encoded), 4, byteorder='little') + encoded
 
 		self.transport.write(notification)
 
@@ -26,92 +35,82 @@ class MessengerProtocol(Protocol):
 		self.factory.clients.remove(self)
 
 	def dataReceived(self, data):
-		#This is called PRO100PEZDATIY PR0T0C0L
-		if data[len(data) - 3:].decode("utf-8") == "END":
-			datastr = self.currentMessage + data[:len(data) - 3].decode("utf-8")
-			type = ""
-			if ord(datastr[0]) == 0:
-				type = "Text"
-			elif ord(datastr[0]) == 1:
-				type = "File"
-			elif ord(datastr[0]) == 2:
-				type = "File Request"
-			
-			namelen = ord(datastr[1])
-			fnamelen = ord(datastr[2])
-			txtlen = len(datastr[3 + namelen + fnamelen:])
-
-			name = datastr[3:3 + namelen]
-			filename = datastr[3 + namelen:3 + namelen + fnamelen]
-			text = datastr[3 + namelen + fnamelen:3 + namelen + fnamelen + txtlen]
-
-			if type != "File":
-				print("Recieved " + type + " from " + name + " : " + text)
+		if self.waiting:
+			self.currentMessage += data
+			if len(self.currentMessage) >= self.namelen + self.fnamelen + self.txtlen:
+				self.waiting = False
 			else:
-				print("Recieved file " + filename + " from " + name)
+				return
+		else:
+			if data[0] == 0:
+				self.msgtype = "Text"
+			elif data[0] == 1:
+				self.msgtype = "File"
+			elif data[0] == 2:
+				self.msgtype = "File Request"
+			
+			self.namelen = data[1]
+			self.fnamelen = data[2]
+			self.txtlen = int.from_bytes(data[3:7], byteorder='little')
+			self.currentMessage = data[7:]
+			
+			if len(self.currentMessage) < self.namelen + self.fnamelen + self.txtlen:
+				self.waiting = True
+				return
 
-			if(type == "File Request"):
-				#Fetch binary string from file
-				in_file = open("files\\" + filename, "rb")
-				dat = in_file.read()
-				in_file.close()
-				
-				txt = binascii.b2a_base64(dat)
-				#Send it to the user
-				request = chr(1).encode("utf-8") + chr(0).encode("utf-8") + chr(len(filename)).encode("utf-8") + \
-			 filename.encode("utf-8") + txt + "END".encode("utf-8")
+		name = self.currentMessage[:self.namelen].decode("utf-8")
+		filename = self.currentMessage[self.namelen:self.namelen + self.fnamelen].decode("utf-8")
+		text = self.currentMessage[self.namelen + self.fnamelen:self.namelen + self.fnamelen + self.txtlen]
 
-				self.transport.write(request)
+		if(self.msgtype == "File Request"):
+			print("Received file request from " + name + " : " + text.decode("utf-8"))
+			#Fetch binary string from file
+			in_file = open(os.path.join("files", filename), "rb")
+			dat = in_file.read()
+			in_file.close()
+			
+			#Send it to the user
+			request = bytes([1, 0, len(filename)]) + int.to_bytes(len(dat), 4, byteorder='little') + filename.encode("utf-8") + dat
 
-			if(type == "File"):
-				dat = binascii.a2b_base64(datastr[3 + namelen + fnamelen:3 + namelen + fnamelen + txtlen])
-				#Extract bytes from base64 string and save it in "files" folder
-				if not os.path.exists("files\\"):
-					os.makedirs("files\\")
-				file = open("files\\" + filename,'ab')
-				file.write(dat)
-				file.close()
-				
-				#Notify all users about new file
+			self.transport.write(request)
+		elif(self.msgtype == "File"):
+			print("Received file " + filename + " from " + name)
+			#Extract bytes from base64 string and save it in "files" folder
+			if not os.path.exists("files"):
+				os.makedirs("files")
+			file = open(os.path.join("files", filename), "ab")
+			file.write(text)
+			file.close()
+			
+			#Notify all users about new file
 
-				note = "User " + name + " uploaded new file " + filename + "\n"
+			note = "User " + name + " uploaded new file " + filename + "\n"
 
-				notification = chr(2).encode("utf-8") + chr(len(name)).encode("utf-8") + chr(0).encode("utf-8") + \
-				 name.encode("utf-8") + note.encode("utf-8")
+			encoded = note.encode("utf-8")
+			notification = bytes([2, len(name), 0]) + int.to_bytes(len(encoded), 4, byteorder='little') + name.encode("utf-8") + encoded
 
-				for c in self.factory.clients:
+			for c in self.factory.clients:
+				c.transport.write(notification)
+
+			#Send info about new currently available files to all clients
+			encoded = self.getFileStr().encode("utf-8")
+			notification = bytes([3, 0, 0]) + int.to_bytes(len(encoded), 4, byteorder='little') + encoded
+
+			for c in self.factory.clients:
+				if c != self:
 					c.transport.write(notification)
 
-				#Send info about new currently available files to all clients
-				filestr = ""
-				for root, dirs, files in os.walk('files\\'):
-					for fil in files:
-						filestr+=fil + ";"
-				filestr = filestr[:len(filestr) - 1]
+			print("All clients are now notified about current file table")
+		if(self.msgtype == "Text"):
+			print("Received text from " + name + ": " + text.decode("utf-8"))
+			#Send recieved text to all clients
+			messg = bytes([0, len(name), 0]) + int.to_bytes(len(text), 4, byteorder='little') + name.encode("utf-8") + text
 
-				notification = '#'.encode("utf-8") + chr(3).encode("utf-8") + chr(0).encode("utf-8") + chr(0).encode("utf-8") + \
-				 filestr.encode("utf-8") + "END".encode("utf-8")
-
-				for c in self.factory.clients:
-					c.transport.write(notification)
-
-				print("All clients are now notified about current file table")
-
-				#Be ready for the new request
-				self.currentMessage = ""
-
-			if(type == "Text"):
-				#Send recieved text to all clients
-				messg = chr(0).encode("utf-8") + chr(len(name)).encode("utf-8") + chr(0).encode("utf-8") + \
-			 name.encode("utf-8") + text.encode("utf-8") + "END".encode("utf-8")
-
-				for c in self.factory.clients:
+			for c in self.factory.clients:
+				if c != self:
 					c.transport.write(messg)
 
-				self.currentMessage = ""
-		else:
-			#Accumulate request
-			self.currentMessage+=data.decode("utf-8")
+		self.currentMessage = bytes()
 
 if __name__ == "__main__":
 	factory = Factory()

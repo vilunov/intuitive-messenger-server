@@ -63,7 +63,7 @@ class MessengerProtocol(Protocol):
 		text = self.currentMessage[self.namelen + self.fnamelen:self.namelen + self.fnamelen + self.txtlen]
 
 		if(self.msgtype == "File Request"):
-			print("Received file request from " + name + " : " + text.decode("utf-8"))
+			print("Received file request from " + name + " : " + filename)
 			#Fetch binary string from file
 			in_file = open(os.path.join("files", filename), "rb")
 			dat = in_file.read()
@@ -97,8 +97,7 @@ class MessengerProtocol(Protocol):
 			notification = bytes([3, 0, 0]) + int.to_bytes(len(encoded), 4, byteorder='little') + encoded
 
 			for c in self.factory.clients:
-				if c != self:
-					c.transport.write(notification)
+				c.transport.write(notification)
 
 			print("All clients are now notified about current file table")
 		if(self.msgtype == "Text"):
@@ -107,8 +106,7 @@ class MessengerProtocol(Protocol):
 			messg = bytes([0, len(name), 0]) + int.to_bytes(len(text), 4, byteorder='little') + name.encode("utf-8") + text
 
 			for c in self.factory.clients:
-				if c != self:
-					c.transport.write(messg)
+				c.transport.write(messg)
 
 		self.currentMessage = bytes()
 

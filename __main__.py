@@ -83,20 +83,8 @@ class MessengerProtocol(Protocol):
 			file.write(text)
 			file.close()
 			
-			#Notify all users about new file
-
-			note = "User " + name + " uploaded new file " + filename + "\n"
-
-			encoded1 = name.encode("utf-8")
-			encoded2 = note.encode("utf-8")
-			notification = bytes([2, len(encoded1), 0]) + int.to_bytes(len(encoded2), 4, byteorder='little') + encoded1 + encoded2
-
-			for c in self.factory.clients:
-				c.transport.write(notification)
-
-			#Send info about new currently available files to all clients
-			encoded = self.getFileStr().encode("utf-8")
-			notification = bytes([3, 0, 0]) + int.to_bytes(len(encoded), 4, byteorder='little') + encoded
+			filestr =self.getFileStr().encode("utf-8")
+			notification = bytes([3, len(name), 0]) + int.to_bytes(len(filestr), 4, byteorder='little') + name.encode("utf-8") + filestr
 
 			for c in self.factory.clients:
 				c.transport.write(notification)
